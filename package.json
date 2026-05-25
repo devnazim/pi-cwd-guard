@@ -1,12 +1,13 @@
 {
   "name": "pi-cwd-guard",
-  "version": "0.1.0",
-  "description": "Pi extension package that asks before read/write/edit tools access files outside the current working directory.",
+  "version": "0.2.0",
+  "description": "Small Pi safety extension for cwd access, protected paths, runtime config confirmation, and common destructive bash commands.",
   "keywords": [
     "pi-package",
     "pi-extension",
     "cwd",
-    "guard"
+    "guard",
+    "safety"
   ],
   "license": "MIT",
   "type": "module",
