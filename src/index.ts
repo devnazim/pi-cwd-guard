@@ -1,13 +1,29 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
 
 const scriptGuidance = [
-	"When using bash, Python, Node.js, or other scripts, ask the user before intentionally reading, writing, creating, moving, or deleting files outside process.cwd().",
+	"When using bash, Python, Node.js, or other scripts, ask the user before intentionally reading, writing, creating, moving, or deleting files outside process.cwd() unless the path is covered by configured pi-cwd-guard allowedOutsideCwdPaths.",
 	"This extension blocks protected write/edit paths and asks before common destructive bash commands; bash/script checks are intentionally heuristic and are not a sandbox.",
 ].join(" ");
+
+const configFileName = "pi-cwd-guard.json";
+
+const cwdGuardCommandUsage = [
+	"Usage:",
+	"  /cwd-guard",
+	"  /cwd-guard show",
+	"  /cwd-guard allow <path...> --project",
+	"  /cwd-guard allow <path...> --global",
+].join("\n");
+
+interface CwdGuardConfig {
+	allowedOutsideCwdPaths: string[];
+}
 
 const hardProtectedDirectoryNames = new Set([
 	"node_modules",
@@ -80,6 +96,132 @@ function normalizeToolPath(inputPath: string): string {
 function isOutsideCwd(cwd: string, target: string): boolean {
 	const relative = path.relative(cwd, target);
 	return relative.startsWith("..") || path.isAbsolute(relative);
+}
+
+function expandHome(inputPath: string): string {
+	if (inputPath === "~") return os.homedir();
+	if (inputPath.startsWith("~/") || inputPath.startsWith("~\\")) return path.join(os.homedir(), inputPath.slice(2));
+	return inputPath;
+}
+
+function uniquePaths(paths: string[]): string[] {
+	return [...new Set(paths)];
+}
+
+function getConfigPaths(cwd: string) {
+	const globalConfigPath = path.join(getAgentDir(), "extensions", configFileName);
+	const projectConfigPath = path.join(cwd, ".pi", configFileName);
+	return { globalConfigPath, projectConfigPath };
+}
+
+function resolveConfiguredPath(configuredPath: string, baseDir: string): string {
+	return path.resolve(baseDir, expandHome(configuredPath.trim()));
+}
+
+function getConfiguredPaths(configPath: string, baseDir: string): string[] {
+	if (!existsSync(configPath)) return [];
+
+	try {
+		const rawConfig = JSON.parse(readFileSync(configPath, "utf-8")) as { allowedOutsideCwdPaths?: unknown };
+		if (!Array.isArray(rawConfig.allowedOutsideCwdPaths)) return [];
+
+		return rawConfig.allowedOutsideCwdPaths
+			.filter((configuredPath): configuredPath is string => typeof configuredPath === "string" && configuredPath.trim().length > 0)
+			.map((configuredPath) => resolveConfiguredPath(configuredPath, baseDir));
+	} catch (error) {
+		console.error(`Warning: Could not parse ${configPath}: ${error}`);
+		return [];
+	}
+}
+
+function loadConfig(cwd: string): CwdGuardConfig {
+	const { globalConfigPath, projectConfigPath } = getConfigPaths(cwd);
+
+	return {
+		allowedOutsideCwdPaths: uniquePaths([
+			...getConfiguredPaths(globalConfigPath, path.dirname(globalConfigPath)),
+			...getConfiguredPaths(projectConfigPath, cwd),
+		]),
+	};
+}
+
+function isAllowedOutsideCwd(resolvedPath: string, config: CwdGuardConfig): boolean {
+	return config.allowedOutsideCwdPaths.some((allowedPath) => !isOutsideCwd(allowedPath, resolvedPath));
+}
+
+function readConfigForWrite(configPath: string): Record<string, unknown> {
+	if (!existsSync(configPath)) return {};
+
+	const rawConfig = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+	if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+		throw new Error("Config must be a JSON object");
+	}
+	return rawConfig as Record<string, unknown>;
+}
+
+function existingAllowedPaths(config: Record<string, unknown>): string[] {
+	const allowedOutsideCwdPaths = config.allowedOutsideCwdPaths;
+	if (!Array.isArray(allowedOutsideCwdPaths)) return [];
+	return allowedOutsideCwdPaths.filter(
+		(configuredPath): configuredPath is string => typeof configuredPath === "string" && configuredPath.trim().length > 0,
+	);
+}
+
+function parseCommandArgs(args: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let quote: "'" | '"' | undefined;
+	let escaping = false;
+	let tokenStarted = false;
+
+	for (const char of args) {
+		if (escaping) {
+			current += char;
+			escaping = false;
+			tokenStarted = true;
+			continue;
+		}
+
+		if (char === "\\" && quote !== "'") {
+			escaping = true;
+			tokenStarted = true;
+			continue;
+		}
+
+		if (quote) {
+			if (char === quote) {
+				quote = undefined;
+			} else {
+				current += char;
+			}
+			tokenStarted = true;
+			continue;
+		}
+
+		if (char === "'" || char === '"') {
+			quote = char;
+			tokenStarted = true;
+			continue;
+		}
+
+		if (/\s/.test(char)) {
+			if (tokenStarted) {
+				tokens.push(current);
+				current = "";
+				tokenStarted = false;
+			}
+			continue;
+		}
+
+		current += char;
+		tokenStarted = true;
+	}
+
+	if (escaping) throw new Error("Trailing escape in command arguments");
+	if (quote) throw new Error("Unterminated quote in command arguments");
+	if (tokenStarted) tokens.push(current);
+
+	return tokens;
 }
 
 function scopedPath(cwd: string, resolvedPath: string): string {
@@ -176,6 +318,93 @@ export default function (pi: ExtensionAPI) {
 		systemPrompt: `${event.systemPrompt}\n\n${scriptGuidance}`,
 	}));
 
+	pi.registerCommand("cwd-guard", {
+		description: "Show or configure pi-cwd-guard outside-cwd exceptions",
+		handler: async (args, ctx) => {
+			let tokens: string[];
+			try {
+				tokens = parseCommandArgs(args);
+			} catch (error) {
+				ctx.ui.notify(`${error instanceof Error ? error.message : error}\n\n${cwdGuardCommandUsage}`, "warning");
+				return;
+			}
+
+			if (tokens.length === 0 || tokens[0] === "show") {
+				const { globalConfigPath, projectConfigPath } = getConfigPaths(ctx.cwd);
+				const config = loadConfig(ctx.cwd);
+				ctx.ui.notify(
+					[
+						"pi-cwd-guard configuration:",
+						"",
+						`Project config: ${projectConfigPath}`,
+						`Global config: ${globalConfigPath}`,
+						"",
+						"Allowed outside-cwd paths:",
+						...(config.allowedOutsideCwdPaths.length > 0
+							? config.allowedOutsideCwdPaths.map((allowedPath) => `  - ${allowedPath}`)
+							: ["  (none)"]),
+					].join("\n"),
+					"info",
+				);
+				return;
+			}
+
+			if (tokens[0] !== "allow") {
+				ctx.ui.notify(cwdGuardCommandUsage, "warning");
+				return;
+			}
+
+			const useProjectConfig = tokens.includes("--project");
+			const useGlobalConfig = tokens.includes("--global");
+			const unknownFlags = tokens.slice(1).filter((token) => token.startsWith("--") && token !== "--project" && token !== "--global");
+			const requestedPaths = tokens.slice(1).filter((token) => !token.startsWith("--") && token.trim().length > 0);
+
+			if (unknownFlags.length > 0 || useProjectConfig === useGlobalConfig || requestedPaths.length === 0) {
+				ctx.ui.notify(cwdGuardCommandUsage, "warning");
+				return;
+			}
+
+			const { globalConfigPath, projectConfigPath } = getConfigPaths(ctx.cwd);
+			const configPath = useGlobalConfig ? globalConfigPath : projectConfigPath;
+			const resolvedPaths = requestedPaths.map((requestedPath) => resolveConfiguredPath(requestedPath, ctx.cwd));
+
+			if (useGlobalConfig) {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("Global pi-cwd-guard config updates require UI confirmation.", "warning");
+					return;
+				}
+
+				const ok = await ctx.ui.confirm(
+					"Update global pi-cwd-guard config?",
+					[
+						`Config: ${configPath}`,
+						"Paths:",
+						...resolvedPaths.map((resolvedPath) => `  - ${resolvedPath}`),
+					].join("\n"),
+				);
+				if (!ok) return;
+			}
+
+			try {
+				const config = readConfigForWrite(configPath);
+				config.allowedOutsideCwdPaths = uniquePaths([...existingAllowedPaths(config), ...resolvedPaths]);
+				mkdirSync(path.dirname(configPath), { recursive: true });
+				writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+				ctx.ui.notify(
+					[
+						`Updated ${useGlobalConfig ? "global" : "project"} pi-cwd-guard config: ${configPath}`,
+						"Added paths:",
+						...resolvedPaths.map((resolvedPath) => `  - ${resolvedPath}`),
+					].join("\n"),
+					"info",
+				);
+			} catch (error) {
+				ctx.ui.notify(`Could not update pi-cwd-guard config: ${error instanceof Error ? error.message : error}`, "error");
+			}
+		},
+	});
+
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName === "bash") {
 			const command = (event.input as { command?: unknown }).command;
@@ -231,6 +460,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (!isOutsideCwd(cwd, resolvedPath)) return;
+		if (isAllowedOutsideCwd(resolvedPath, loadConfig(cwd))) return;
 
 		return confirmOrBlock(
 			ctx,

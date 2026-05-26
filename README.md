@@ -16,8 +16,58 @@ The extension intercepts these built-in tools:
 Before `read`, `write`, or `edit` runs, the extension strips a leading `@` the same way Pi's built-in file tools do, then resolves the tool's `path` argument against the current working directory.
 
 - If the resolved path is inside the current working directory, the tool continues to the next checks.
-- If the resolved path is outside the current working directory, Pi asks for confirmation.
-- If no UI is available, outside-cwd access is blocked by default.
+- If the resolved path is outside the current working directory and is not covered by `allowedOutsideCwdPaths`, Pi asks for confirmation.
+- If no UI is available, outside-cwd access is blocked by default unless the path is covered by `allowedOutsideCwdPaths`.
+
+### Configuring outside-cwd exceptions
+
+You can allow specific outside-cwd paths with JSON config files:
+
+- Project-local: `.pi/pi-cwd-guard.json`
+- Global: `~/.pi/agent/extensions/pi-cwd-guard.json`
+
+Example:
+
+```json
+{
+  "allowedOutsideCwdPaths": [
+    "/tmp",
+    "/var/tmp",
+    "~/shared-workspace",
+    "../sibling-project"
+  ]
+}
+```
+
+Notes:
+
+- Multiple paths are supported.
+- Matching is recursive: allowing `/tmp` allows `/tmp/foo/bar.txt`.
+- `~` expands to your home directory.
+- Absolute paths are used as-is.
+- Relative paths in project config resolve against the current working directory.
+- Relative paths in global config resolve against `~/.pi/agent/extensions`.
+- Project and global `allowedOutsideCwdPaths` are merged.
+- These exceptions only skip the outside-cwd confirmation. They do not bypass hard-protected path blocks, runtime config confirmation, or destructive bash confirmation.
+
+You can also inspect or update the config from Pi with the `/cwd-guard` command:
+
+```text
+/cwd-guard
+/cwd-guard show
+/cwd-guard allow /tmp --project
+/cwd-guard allow /tmp --global
+/cwd-guard allow /tmp /var/tmp ~/shared-workspace --project
+/cwd-guard allow "/tmp/my folder" --project
+```
+
+Command notes:
+
+- `/cwd-guard` and `/cwd-guard show` display the merged active configuration.
+- `allow <path...> --project` updates `.pi/pi-cwd-guard.json`.
+- `allow <path...> --global` updates `~/.pi/agent/extensions/pi-cwd-guard.json` and asks for confirmation first.
+- Paths added by the command are written as absolute resolved paths.
+- Command arguments support shell-style single quotes, double quotes, and backslash escapes for paths with spaces.
 
 ### Hard-protected paths
 
@@ -59,7 +109,7 @@ If no UI is available, runtime config changes are blocked by default.
 - `git reset --hard`
 - `git clean -fd`
 
-This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()`.
+This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()` unless the path is covered by configured `allowedOutsideCwdPaths`.
 
 ## Install
 
