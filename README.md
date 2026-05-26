@@ -63,7 +63,9 @@ You can also inspect or update the config from Pi with the `/cwd-guard` command:
 
 Command notes:
 
-- `/cwd-guard` and `/cwd-guard show` display the merged active configuration.
+- `/cwd-guard` opens an interactive menu for showing config or adding exceptions. Without UI, it displays the merged active configuration.
+- `/cwd-guard show` displays the merged active configuration.
+- Typing `/cwd-guard ` in interactive mode autocompletes subcommands, and `allow ... ` autocompletes `--project` / `--global`.
 - `allow <path...> --project` updates `.pi/pi-cwd-guard.json`.
 - `allow <path...> --global` updates `~/.pi/agent/extensions/pi-cwd-guard.json` and asks for confirmation first.
 - Paths added by the command are written as absolute resolved paths.
@@ -97,6 +99,10 @@ These are hard-blocked rather than confirmed.
 - `znv`
 
 If no UI is available, runtime config changes are blocked by default.
+
+### Permission prompt notifications
+
+If [pi-cmux](https://www.npmjs.com/package/pi-cmux) is installed, `pi-cwd-guard` sends a best-effort cmux notification/status update whenever it opens a permission confirmation. This is optional and no-ops when pi-cmux is not present.
 
 ### Common destructive bash confirmation
 

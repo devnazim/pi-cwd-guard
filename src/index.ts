@@ -12,6 +12,7 @@ const scriptGuidance = [
 ].join(" ");
 
 const configFileName = "pi-cwd-guard.json";
+const piCmuxNotifySymbol = Symbol.for("pi.cmux.notify.v1");
 
 const cwdGuardCommandUsage = [
 	"Usage:",
@@ -21,9 +22,51 @@ const cwdGuardCommandUsage = [
 	"  /cwd-guard allow <path...> --global",
 ].join("\n");
 
+const cwdGuardSubcommandCompletions = [
+	{ value: "show", label: "show", description: "Display merged pi-cwd-guard configuration" },
+	{ value: "allow ", label: "allow <path...>", description: "Add outside-cwd exceptions" },
+];
+
+const cwdGuardScopeFlagCompletions = [
+	{ flag: "--project", description: "Save exception in this project's .pi config" },
+	{ flag: "--global", description: "Save exception in the global pi config" },
+];
+
+const cwdGuardMenuChoices = {
+	show: "Show active configuration",
+	allowProject: "Allow outside-cwd path(s) for this project",
+	allowGlobal: "Allow outside-cwd path(s) globally",
+} as const;
+
 interface CwdGuardConfig {
 	allowedOutsideCwdPaths: string[];
 }
+
+interface PiCmuxNotification {
+	title: string;
+	subtitle?: string;
+	body?: string;
+	source?: string;
+	type?: string;
+	level?: "info" | "success" | "warning" | "error" | "warn";
+	notify?: boolean;
+	log?: boolean;
+	status?:
+		| {
+				action?: "set";
+				key?: string;
+				text: string;
+				icon?: string;
+				color?: string;
+			}
+		| {
+				action: "clear";
+				key?: string;
+			};
+}
+
+type PiCmuxNotifier = (notification: PiCmuxNotification) => void | Promise<void>;
+type PiCmuxGlobal = { [piCmuxNotifySymbol]?: PiCmuxNotifier };
 
 const hardProtectedDirectoryNames = new Set([
 	"node_modules",
@@ -228,6 +271,39 @@ function scopedPath(cwd: string, resolvedPath: string): string {
 	return isOutsideCwd(cwd, resolvedPath) ? resolvedPath : path.relative(cwd, resolvedPath);
 }
 
+function completeCwdGuardArgs(prefix: string) {
+	const trimmedPrefix = prefix.trimStart();
+	const leadingWhitespace = prefix.slice(0, prefix.length - trimmedPrefix.length);
+
+	if (!trimmedPrefix.includes(" ")) {
+		const completions = cwdGuardSubcommandCompletions.filter(({ value }) => value.startsWith(trimmedPrefix));
+		return completions.length > 0
+			? completions.map((completion) => ({ ...completion, value: `${leadingWhitespace}${completion.value}` }))
+			: null;
+	}
+
+	if (!trimmedPrefix.startsWith("allow ")) return null;
+	if (/\s--(?:project|global)(?:\s|$)/.test(prefix)) return null;
+
+	const currentToken = prefix.match(/(?:^|\s)(\S*)$/)?.[1] ?? "";
+	if (currentToken && !currentToken.startsWith("--")) return null;
+
+	const beforeCurrentToken = prefix.slice(0, prefix.length - currentToken.length);
+	const hasPathBeforeFlag = beforeCurrentToken
+		.slice(beforeCurrentToken.indexOf("allow") + "allow".length)
+		.trim().length > 0;
+	if (!hasPathBeforeFlag) return null;
+
+	const completions = cwdGuardScopeFlagCompletions.filter(({ flag }) => flag.startsWith(currentToken));
+	return completions.length > 0
+		? completions.map(({ flag, description }) => ({
+				value: `${beforeCurrentToken}${flag}`,
+				label: flag,
+				description,
+			}))
+		: null;
+}
+
 function pathParts(targetPath: string): string[] {
 	return targetPath.split(path.sep).filter(Boolean).map((part) => part.toLowerCase());
 }
@@ -298,6 +374,55 @@ function getRuntimeConfigReason(cwd: string, toolName: string, resolvedPath: str
 	return matchedPattern ? "runtime config-like content" : undefined;
 }
 
+function getPiCmuxNotifier(): PiCmuxNotifier | undefined {
+	return (globalThis as unknown as PiCmuxGlobal)[piCmuxNotifySymbol];
+}
+
+function sendPiCmuxNotification(notification: PiCmuxNotification): void {
+	const notify = getPiCmuxNotifier();
+	if (typeof notify !== "function") return;
+
+	void Promise.resolve(notify(notification)).catch(() => {
+		// Optional cmux notifications must never affect guard behavior.
+	});
+}
+
+function notifyPermissionRequest(title: string): void {
+	sendPiCmuxNotification({
+		source: "cwd-guard",
+		type: "permission_request",
+		title: "pi-cwd-guard needs permission",
+		subtitle: title,
+		body: "Check pi to approve or deny.",
+		level: "warning",
+		status: { key: "cwd-guard", text: "permission", icon: "shield", color: "#f59e0b" },
+	});
+}
+
+function clearPermissionNotification(): void {
+	sendPiCmuxNotification({
+		source: "cwd-guard",
+		type: "permission_request_resolved",
+		title: "pi-cwd-guard permission resolved",
+		notify: false,
+		log: false,
+		status: { action: "clear", key: "cwd-guard" },
+	});
+}
+
+async function confirmWithNotification(
+	ctx: { ui: { confirm(title: string, message?: string): Promise<boolean> } },
+	title: string,
+	message: string,
+): Promise<boolean> {
+	notifyPermissionRequest(title);
+	try {
+		return await ctx.ui.confirm(title, message);
+	} finally {
+		clearPermissionNotification();
+	}
+}
+
 async function confirmOrBlock(
 	ctx: { hasUI: boolean; ui: { confirm(title: string, message?: string): Promise<boolean> } },
 	title: string,
@@ -308,7 +433,7 @@ async function confirmOrBlock(
 		return { block: true, reason: `${blockReason} (no UI for confirmation)` };
 	}
 
-	const ok = await ctx.ui.confirm(title, message);
+	const ok = await confirmWithNotification(ctx, title, message);
 	if (!ok) return { block: true, reason: blockReason };
 	return undefined;
 }
@@ -320,6 +445,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("cwd-guard", {
 		description: "Show or configure pi-cwd-guard outside-cwd exceptions",
+		getArgumentCompletions: completeCwdGuardArgs,
 		handler: async (args, ctx) => {
 			let tokens: string[];
 			try {
@@ -329,7 +455,37 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (tokens.length === 0 || tokens[0] === "show") {
+			if (tokens.length === 0) {
+				if (!ctx.hasUI) {
+					tokens = ["show"];
+				} else {
+					const selected = await ctx.ui.select("pi-cwd-guard", Object.values(cwdGuardMenuChoices));
+					if (!selected) return;
+
+					if (selected === cwdGuardMenuChoices.show) {
+						tokens = ["show"];
+					} else {
+						const paths = await ctx.ui.input("Outside-cwd path(s)", "e.g. /tmp ~/shared-workspace");
+						if (!paths?.trim()) return;
+
+						let requestedPaths: string[];
+						try {
+							requestedPaths = parseCommandArgs(paths);
+						} catch (error) {
+							ctx.ui.notify(`${error instanceof Error ? error.message : error}\n\n${cwdGuardCommandUsage}`, "warning");
+							return;
+						}
+
+						tokens = [
+							"allow",
+							...requestedPaths,
+							selected === cwdGuardMenuChoices.allowProject ? "--project" : "--global",
+						];
+					}
+				}
+			}
+
+			if (tokens[0] === "show") {
 				const { globalConfigPath, projectConfigPath } = getConfigPaths(ctx.cwd);
 				const config = loadConfig(ctx.cwd);
 				ctx.ui.notify(
@@ -374,7 +530,8 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
-				const ok = await ctx.ui.confirm(
+				const ok = await confirmWithNotification(
+					ctx,
 					"Update global pi-cwd-guard config?",
 					[
 						`Config: ${configPath}`,
