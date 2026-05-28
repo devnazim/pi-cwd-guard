@@ -78,6 +78,7 @@ Command notes:
 - `.env`, `.env.*`
 - `secrets/`, `.secrets/`, `credentials/`, `.credentials/`
 - `.npmrc`, `.pypirc`, `id_rsa`, `id_ed25519`, kubeconfig files
+- common credential JSON files such as `secrets.json`, `credentials.json`, `client_secret.json`, service-account JSON files
 - `*.pem`, `*.key`, `*.p12`, `*.pfx`
 - `node_modules/`
 - generated/build output dirs like `dist/`, `build/`, `coverage/`, `.next/`, `.nuxt/`, `generated/`
@@ -86,7 +87,7 @@ These are hard-blocked rather than confirmed.
 
 ### Runtime config confirmation
 
-`write` and `edit` ask for confirmation before changing likely runtime config, including paths like `env.ts`, `runtime-config.ts`, `app-config.ts`, and config edits containing obvious environment/API markers such as:
+`write` and `edit` ask for confirmation before changing likely runtime config, including paths like `env.ts`, `runtime-config.ts`, `app-config.ts`, `config.ts`, `config.json`, `appsettings.json`, `application.yml`, deployment config such as `docker-compose.yml`, `serverless.yml`, `vercel.json`, `netlify.toml`, `wrangler.toml`, and config files under config-ish/deployment directories such as `config/*.ts`, `config/*.json`, `k8s/*.yaml`, or `infra/*.tfvars`. For config-ish files/directories only, edits containing obvious environment/API markers also ask for confirmation, such as:
 
 - `BASE_URL`
 - `API_URL`

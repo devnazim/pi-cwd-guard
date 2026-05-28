@@ -1,6 +1,6 @@
 {
   "name": "pi-cwd-guard",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Small Pi safety extension for cwd access, protected paths, runtime config confirmation, and common destructive bash commands.",
   "keywords": [
     "pi-package",
