@@ -140,6 +140,10 @@ pi -e /absolute/path/to/pi-cwd-guard
 
 The package also includes a root `index.ts` shim, so direct extension-directory configuration such as `"extensions": ["/absolute/path/to/pi-cwd-guard"]` works too.
 
+## Compatibility
+
+`pi-cwd-guard` uses Pi's extension API via a peer dependency and is intended to work across current Pi releases.
+
 ## Development
 
 ```sh
