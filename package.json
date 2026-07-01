@@ -35,10 +35,10 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.76.0"
+    "@earendil-works/pi-coding-agent": ">=0.80.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.80.3",
     "typescript": "^6.0.3"
   }
 }
