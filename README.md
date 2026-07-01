@@ -116,7 +116,7 @@ If [pi-cmux](https://www.npmjs.com/package/pi-cmux) is installed, `pi-cwd-guard`
 - `git reset --hard`
 - `git clean -fd`
 
-This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()` unless the path is covered by configured `allowedOutsideCwdPaths`.
+This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()` unless the path is covered by configured `allowedOutsideCwdPaths`. That guidance includes the active merged allow-list for the current cwd so agents can recognize configured exceptions.
 
 ## Install
 

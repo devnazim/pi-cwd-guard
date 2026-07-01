@@ -6,7 +6,7 @@ import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent"
 const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
 
-const scriptGuidance = [
+const scriptGuidanceIntro = [
 	"When using bash, Python, Node.js, or other scripts, ask the user before intentionally reading, writing, creating, moving, or deleting files outside process.cwd() unless the path is covered by configured pi-cwd-guard allowedOutsideCwdPaths.",
 	"This extension blocks protected write/edit paths and asks before common destructive bash commands; bash/script checks are intentionally heuristic and are not a sandbox.",
 ].join(" ");
@@ -264,6 +264,20 @@ function loadConfig(cwd: string): CwdGuardConfig {
 			...getConfiguredPaths(projectConfigPath, cwd),
 		]),
 	};
+}
+
+function getScriptGuidance(cwd: string): string {
+	const config = loadConfig(cwd);
+	const allowedPaths =
+		config.allowedOutsideCwdPaths.length > 0
+			? config.allowedOutsideCwdPaths.map((allowedPath) => `  - ${allowedPath}`).join("\n")
+			: "  (none)";
+
+	return [
+		scriptGuidanceIntro,
+		"Active recursive pi-cwd-guard allowedOutsideCwdPaths for this cwd:",
+		allowedPaths,
+	].join("\n");
 }
 
 function isAllowedOutsideCwd(resolvedPath: string, config: CwdGuardConfig): boolean {
@@ -529,8 +543,8 @@ async function confirmOrBlock(
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("before_agent_start", (event) => ({
-		systemPrompt: `${event.systemPrompt}\n\n${scriptGuidance}`,
+	pi.on("before_agent_start", (event, ctx) => ({
+		systemPrompt: `${event.systemPrompt}\n\n${getScriptGuidance(ctx.cwd)}`,
 	}));
 
 	pi.registerCommand("cwd-guard", {

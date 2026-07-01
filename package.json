@@ -10,6 +10,14 @@
     "safety"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devnazim/pi-cwd-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/devnazim/pi-cwd-guard/issues"
+  },
+  "homepage": "https://github.com/devnazim/pi-cwd-guard#readme",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
