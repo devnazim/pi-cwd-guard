@@ -142,7 +142,7 @@ The package also includes a root `index.ts` shim, so direct extension-directory 
 
 ## Compatibility
 
-`pi-cwd-guard` uses Pi's extension API via a peer dependency and is intended to work across current Pi releases.
+`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer.
 
 ## Development
 
