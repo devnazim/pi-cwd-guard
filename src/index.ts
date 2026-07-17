@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getDangerousBashMatches } from "./destructive-bash.ts";
 
 const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
@@ -18,13 +19,18 @@ const cwdGuardCommandUsage = [
 	"Usage:",
 	"  /cwd-guard",
 	"  /cwd-guard show",
-	"  /cwd-guard allow <path...> --project",
-	"  /cwd-guard allow <path...> --global",
+	"  /cwd-guard allow <path...> --project|--global",
+	"  /cwd-guard allow-destructive <path...> --project|--global",
 ].join("\n");
 
 const cwdGuardSubcommandCompletions = [
 	{ value: "show", label: "show", description: "Display merged pi-cwd-guard configuration" },
 	{ value: "allow ", label: "allow <path...>", description: "Add outside-cwd exceptions" },
+	{
+		value: "allow-destructive ",
+		label: "allow-destructive <path...>",
+		description: "Allow recognized destructive bash commands within paths",
+	},
 ];
 
 const cwdGuardScopeFlagCompletions = [
@@ -36,10 +42,13 @@ const cwdGuardMenuChoices = {
 	show: "Show active configuration",
 	allowProject: "Allow outside-cwd path(s) for this project",
 	allowGlobal: "Allow outside-cwd path(s) globally",
+	allowDestructiveProject: "Allow destructive bash path(s) for this project",
+	allowDestructiveGlobal: "Allow destructive bash path(s) globally",
 } as const;
 
 interface CwdGuardConfig {
 	allowedOutsideCwdPaths: string[];
+	allowedDestructiveBashPaths: string[];
 }
 
 interface PiCmuxNotification {
@@ -199,15 +208,6 @@ const runtimeConfigFileNamePattern = /(?:^|[-_.])(?:appsettings|application|conf
 
 const runtimeConfigContentFileNamePattern = /(?:^|[-_.])(?:config|env|environment|settings|constants)(?:[-_.]|$)/;
 
-const dangerousBashPatterns = [
-	{ label: "recursive/forced rm", pattern: /\brm\s+(?:-[^\s;|&]*[rf][^\s;|&]*|--recursive|--force)\b/i },
-	{ label: "sudo", pattern: /\bsudo\b/i },
-	{ label: "dangerous chmod", pattern: /\bchmod\b[^\n;|&]*(?:\b777\b|-\S*R\S*)/ },
-	{ label: "recursive chown", pattern: /\bchown\b[^\n;|&]*-\S*R\S*/ },
-	{ label: "git reset --hard", pattern: /\bgit\s+reset\b[^\n;|&]*--hard\b/i },
-	{ label: "git clean -fd", pattern: /\bgit\s+clean\b(?=[^\n;|&]*-[^\s;|&]*f)(?=[^\n;|&]*-[^\s;|&]*d)/i },
-];
-
 function normalizeToolPath(inputPath: string): string {
 	// Built-in file tools strip a leading @ before resolving paths.
 	// Match that behavior so @/tmp/foo and @../foo are guarded correctly.
@@ -216,7 +216,7 @@ function normalizeToolPath(inputPath: string): string {
 
 function isOutsideCwd(cwd: string, target: string): boolean {
 	const relative = path.relative(cwd, target);
-	return relative.startsWith("..") || path.isAbsolute(relative);
+	return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
 function expandHome(inputPath: string): string {
@@ -239,44 +239,68 @@ function resolveConfiguredPath(configuredPath: string, baseDir: string): string 
 	return path.resolve(baseDir, expandHome(configuredPath.trim()));
 }
 
-function getConfiguredPaths(configPath: string, baseDir: string): string[] {
-	if (!existsSync(configPath)) return [];
+function getConfiguredPaths(configPath: string, baseDir: string): CwdGuardConfig {
+	const emptyConfig = { allowedOutsideCwdPaths: [], allowedDestructiveBashPaths: [] };
+	if (!existsSync(configPath)) return emptyConfig;
 
 	try {
-		const rawConfig = JSON.parse(readFileSync(configPath, "utf-8")) as { allowedOutsideCwdPaths?: unknown };
-		if (!Array.isArray(rawConfig.allowedOutsideCwdPaths)) return [];
+		const rawConfig = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+		if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) return emptyConfig;
 
-		return rawConfig.allowedOutsideCwdPaths
-			.filter((configuredPath): configuredPath is string => typeof configuredPath === "string" && configuredPath.trim().length > 0)
-			.map((configuredPath) => resolveConfiguredPath(configuredPath, baseDir));
+		const resolvePaths = (configuredPaths: unknown): string[] =>
+			Array.isArray(configuredPaths)
+				? configuredPaths
+						.filter(
+							(configuredPath): configuredPath is string =>
+								typeof configuredPath === "string" && configuredPath.trim().length > 0,
+						)
+						.map((configuredPath) => resolveConfiguredPath(configuredPath, baseDir))
+				: [];
+		const config = rawConfig as Record<string, unknown>;
+		return {
+			allowedOutsideCwdPaths: resolvePaths(config.allowedOutsideCwdPaths),
+			allowedDestructiveBashPaths: resolvePaths(config.allowedDestructiveBashPaths),
+		};
 	} catch (error) {
 		console.error(`Warning: Could not parse ${configPath}: ${error}`);
-		return [];
+		return emptyConfig;
 	}
 }
 
 function loadConfig(cwd: string): CwdGuardConfig {
 	const { globalConfigPath, projectConfigPath } = getConfigPaths(cwd);
+	const globalConfig = getConfiguredPaths(globalConfigPath, path.dirname(globalConfigPath));
+	const projectConfig = getConfiguredPaths(projectConfigPath, cwd);
 
 	return {
 		allowedOutsideCwdPaths: uniquePaths([
-			...getConfiguredPaths(globalConfigPath, path.dirname(globalConfigPath)),
-			...getConfiguredPaths(projectConfigPath, cwd),
+			...globalConfig.allowedOutsideCwdPaths,
+			...projectConfig.allowedOutsideCwdPaths,
+		]),
+		allowedDestructiveBashPaths: uniquePaths([
+			...globalConfig.allowedDestructiveBashPaths,
+			...projectConfig.allowedDestructiveBashPaths,
 		]),
 	};
 }
 
 function getScriptGuidance(cwd: string): string {
 	const config = loadConfig(cwd);
-	const allowedPaths =
+	const allowedOutsidePaths =
 		config.allowedOutsideCwdPaths.length > 0
 			? config.allowedOutsideCwdPaths.map((allowedPath) => `  - ${allowedPath}`).join("\n")
+			: "  (none)";
+	const allowedDestructivePaths =
+		config.allowedDestructiveBashPaths.length > 0
+			? config.allowedDestructiveBashPaths.map((allowedPath) => `  - ${allowedPath}`).join("\n")
 			: "  (none)";
 
 	return [
 		scriptGuidanceIntro,
 		"Active recursive pi-cwd-guard allowedOutsideCwdPaths for this cwd:",
-		allowedPaths,
+		allowedOutsidePaths,
+		"Active recursive pi-cwd-guard allowedDestructiveBashPaths for recognized commands:",
+		allowedDestructivePaths,
 	].join("\n");
 }
 
@@ -294,10 +318,10 @@ function readConfigForWrite(configPath: string): Record<string, unknown> {
 	return rawConfig as Record<string, unknown>;
 }
 
-function existingAllowedPaths(config: Record<string, unknown>): string[] {
-	const allowedOutsideCwdPaths = config.allowedOutsideCwdPaths;
-	if (!Array.isArray(allowedOutsideCwdPaths)) return [];
-	return allowedOutsideCwdPaths.filter(
+function existingAllowedPaths(config: Record<string, unknown>, configKey: keyof CwdGuardConfig): string[] {
+	const allowedPaths = config[configKey];
+	if (!Array.isArray(allowedPaths)) return [];
+	return allowedPaths.filter(
 		(configuredPath): configuredPath is string => typeof configuredPath === "string" && configuredPath.trim().length > 0,
 	);
 }
@@ -374,7 +398,10 @@ function completeCwdGuardArgs(prefix: string) {
 			: null;
 	}
 
-	if (!trimmedPrefix.startsWith("allow ")) return null;
+	const allowSubcommand = ["allow", "allow-destructive"].find((subcommand) =>
+		trimmedPrefix.startsWith(`${subcommand} `),
+	);
+	if (!allowSubcommand) return null;
 	if (/\s--(?:project|global)(?:\s|$)/.test(prefix)) return null;
 
 	const currentToken = prefix.match(/(?:^|\s)(\S*)$/)?.[1] ?? "";
@@ -382,7 +409,7 @@ function completeCwdGuardArgs(prefix: string) {
 
 	const beforeCurrentToken = prefix.slice(0, prefix.length - currentToken.length);
 	const hasPathBeforeFlag = beforeCurrentToken
-		.slice(beforeCurrentToken.indexOf("allow") + "allow".length)
+		.slice(beforeCurrentToken.indexOf(allowSubcommand) + allowSubcommand.length)
 		.trim().length > 0;
 	if (!hasPathBeforeFlag) return null;
 
@@ -548,7 +575,7 @@ export default function (pi: ExtensionAPI) {
 	}));
 
 	pi.registerCommand("cwd-guard", {
-		description: "Show or configure pi-cwd-guard outside-cwd exceptions",
+		description: "Show or configure pi-cwd-guard path exceptions",
 		getArgumentCompletions: completeCwdGuardArgs,
 		handler: async (args, ctx) => {
 			let tokens: string[];
@@ -569,7 +596,16 @@ export default function (pi: ExtensionAPI) {
 					if (selected === cwdGuardMenuChoices.show) {
 						tokens = ["show"];
 					} else {
-						const paths = await ctx.ui.input("Outside-cwd path(s)", "e.g. /tmp ~/shared-workspace");
+						const allowDestructive =
+							selected === cwdGuardMenuChoices.allowDestructiveProject ||
+							selected === cwdGuardMenuChoices.allowDestructiveGlobal;
+						const useProjectConfig =
+							selected === cwdGuardMenuChoices.allowProject ||
+							selected === cwdGuardMenuChoices.allowDestructiveProject;
+						const paths = await ctx.ui.input(
+							allowDestructive ? "Destructive bash path(s)" : "Outside-cwd path(s)",
+							"e.g. /tmp ~/shared-workspace",
+						);
 						if (!paths?.trim()) return;
 
 						let requestedPaths: string[];
@@ -581,9 +617,9 @@ export default function (pi: ExtensionAPI) {
 						}
 
 						tokens = [
-							"allow",
+							allowDestructive ? "allow-destructive" : "allow",
 							...requestedPaths,
-							selected === cwdGuardMenuChoices.allowProject ? "--project" : "--global",
+							useProjectConfig ? "--project" : "--global",
 						];
 					}
 				}
@@ -603,17 +639,24 @@ export default function (pi: ExtensionAPI) {
 						...(config.allowedOutsideCwdPaths.length > 0
 							? config.allowedOutsideCwdPaths.map((allowedPath) => `  - ${allowedPath}`)
 							: ["  (none)"]),
+						"",
+						"Allowed destructive bash paths:",
+						...(config.allowedDestructiveBashPaths.length > 0
+							? config.allowedDestructiveBashPaths.map((allowedPath) => `  - ${allowedPath}`)
+							: ["  (none)"]),
 					].join("\n"),
 					"info",
 				);
 				return;
 			}
 
-			if (tokens[0] !== "allow") {
+			if (tokens[0] !== "allow" && tokens[0] !== "allow-destructive") {
 				ctx.ui.notify(cwdGuardCommandUsage, "warning");
 				return;
 			}
 
+			const configKey: keyof CwdGuardConfig =
+				tokens[0] === "allow-destructive" ? "allowedDestructiveBashPaths" : "allowedOutsideCwdPaths";
 			const useProjectConfig = tokens.includes("--project");
 			const useGlobalConfig = tokens.includes("--global");
 			const unknownFlags = tokens.slice(1).filter((token) => token.startsWith("--") && token !== "--project" && token !== "--global");
@@ -639,6 +682,7 @@ export default function (pi: ExtensionAPI) {
 					"Update global pi-cwd-guard config?",
 					[
 						`Config: ${configPath}`,
+						`List: ${configKey}`,
 						"Paths:",
 						...resolvedPaths.map((resolvedPath) => `  - ${resolvedPath}`),
 					].join("\n"),
@@ -648,13 +692,14 @@ export default function (pi: ExtensionAPI) {
 
 			try {
 				const config = readConfigForWrite(configPath);
-				config.allowedOutsideCwdPaths = uniquePaths([...existingAllowedPaths(config), ...resolvedPaths]);
+				config[configKey] = uniquePaths([...existingAllowedPaths(config, configKey), ...resolvedPaths]);
 				mkdirSync(path.dirname(configPath), { recursive: true });
 				writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
 				ctx.ui.notify(
 					[
 						`Updated ${useGlobalConfig ? "global" : "project"} pi-cwd-guard config: ${configPath}`,
+						`Updated list: ${configKey}`,
 						"Added paths:",
 						...resolvedPaths.map((resolvedPath) => `  - ${resolvedPath}`),
 					].join("\n"),
@@ -671,7 +716,8 @@ export default function (pi: ExtensionAPI) {
 			const command = (event.input as { command?: unknown }).command;
 			if (typeof command !== "string") return;
 
-			const matches = dangerousBashPatterns.filter(({ pattern }) => pattern.test(command));
+			const config = loadConfig(ctx.cwd);
+			const matches = getDangerousBashMatches(command, config.allowedDestructiveBashPaths);
 			if (matches.length === 0) return;
 
 			return confirmOrBlock(

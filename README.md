@@ -19,7 +19,7 @@ Before `read`, `write`, or `edit` runs, the extension strips a leading `@` the s
 - If the resolved path is outside the current working directory and is not covered by `allowedOutsideCwdPaths`, Pi asks for confirmation.
 - If no UI is available, outside-cwd access is blocked by default unless the path is covered by `allowedOutsideCwdPaths`.
 
-### Configuring outside-cwd exceptions
+### Configuring path exceptions
 
 You can allow specific outside-cwd paths with JSON config files:
 
@@ -35,6 +35,9 @@ Example:
     "/var/tmp",
     "~/shared-workspace",
     "../sibling-project"
+  ],
+  "allowedDestructiveBashPaths": [
+    "/tmp/pi-web-video2"
   ]
 }
 ```
@@ -47,8 +50,11 @@ Notes:
 - Absolute paths are used as-is.
 - Relative paths in project config resolve against the current working directory.
 - Relative paths in global config resolve against `~/.pi/agent/extensions`.
-- Project and global `allowedOutsideCwdPaths` are merged.
-- These exceptions only skip the outside-cwd confirmation. They do not bypass hard-protected path blocks, runtime config confirmation, or destructive bash confirmation.
+- Project and global path lists are merged independently.
+- `allowedOutsideCwdPaths` only skips outside-cwd confirmation. It does not bypass hard-protected path blocks, runtime config confirmation, or destructive bash confirmation.
+- `allowedDestructiveBashPaths` skips the destructive bash confirmation only for recognized `rm` commands when every static absolute or `~/...` target is recursively covered.
+- Relative, dynamic, or ambiguous targets, mixed allowed/disallowed targets, redirections on the `rm` segment, and unrelated destructive operations still require confirmation.
+- Existing path ancestors are resolved through symlinks before applying an exemption. This remains a heuristic preflight check, not a sandbox or protection against filesystem races.
 
 You can also inspect or update the config from Pi with the `/cwd-guard` command:
 
@@ -59,15 +65,17 @@ You can also inspect or update the config from Pi with the `/cwd-guard` command:
 /cwd-guard allow /tmp --global
 /cwd-guard allow /tmp /var/tmp ~/shared-workspace --project
 /cwd-guard allow "/tmp/my folder" --project
+/cwd-guard allow-destructive /tmp/pi-web-video2 --project
 ```
 
 Command notes:
 
 - `/cwd-guard` opens an interactive menu for showing config or adding exceptions. Without UI, it displays the merged active configuration.
 - `/cwd-guard show` displays the merged active configuration.
-- Typing `/cwd-guard ` in interactive mode autocompletes subcommands, and `allow ... ` autocompletes `--project` / `--global`.
-- `allow <path...> --project` updates `.pi/pi-cwd-guard.json`.
-- `allow <path...> --global` updates `~/.pi/agent/extensions/pi-cwd-guard.json` and asks for confirmation first.
+- Typing `/cwd-guard ` in interactive mode autocompletes subcommands; both allow commands autocomplete `--project` / `--global`.
+- `allow <path...> --project|--global` updates `allowedOutsideCwdPaths`.
+- `allow-destructive <path...> --project|--global` updates `allowedDestructiveBashPaths`.
+- Global updates write `~/.pi/agent/extensions/pi-cwd-guard.json` and ask for confirmation first.
 - Paths added by the command are written as absolute resolved paths.
 - Command arguments support shell-style single quotes, double quotes, and backslash escapes for paths with spaces.
 
@@ -116,7 +124,9 @@ If [pi-cmux](https://www.npmjs.com/package/pi-cmux) is installed, `pi-cwd-guard`
 - `git reset --hard`
 - `git clean -fd`
 
-This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()` unless the path is covered by configured `allowedOutsideCwdPaths`. That guidance includes the active merged allow-list for the current cwd so agents can recognize configured exceptions.
+This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. Recognized forced or recursive `rm` commands skip confirmation when every static absolute or home-relative target is under an `allowedDestructiveBashPaths` entry. A compound command may precede the exempted `rm` only with recognized `mkdir -p` operations under the same allow-list. Commands with relative, dynamic, ambiguous, mixed, or symlink-escaping targets remain confirm-by-default. Other destructive patterns such as `sudo` and Git operations are never path-exempted.
+
+For scripts, the extension adds advisory prompt guidance telling the agent to ask before intentionally accessing paths outside `process.cwd()` unless the path is covered by configured `allowedOutsideCwdPaths`. That guidance includes both active merged path lists for the current cwd so agents can recognize configured exceptions.
 
 ## Install
 
@@ -148,6 +158,7 @@ The package also includes a root `index.ts` shim, so direct extension-directory 
 
 ```sh
 npm install
+npm test
 npm run typecheck
 npm run pack:dry-run
 ```

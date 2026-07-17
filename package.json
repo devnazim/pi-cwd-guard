@@ -20,6 +20,7 @@
   "homepage": "https://github.com/devnazim/pi-cwd-guard#readme",
   "type": "module",
   "scripts": {
+    "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pack:dry-run": "npm pack --dry-run"
   },
