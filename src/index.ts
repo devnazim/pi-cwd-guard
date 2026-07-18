@@ -7,9 +7,13 @@ import { getDangerousBashMatches } from "./destructive-bash.ts";
 const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
 
-const scriptGuidanceIntro = [
-	"When using bash, Python, Node.js, or other scripts, ask the user before intentionally reading, writing, creating, moving, or deleting files outside process.cwd() unless the path is covered by configured pi-cwd-guard allowedOutsideCwdPaths.",
-	"This extension blocks protected write/edit paths and asks before common destructive bash commands; bash/script checks are intentionally heuristic and are not a sandbox.",
+const agentGuidanceIntro = [
+	"Before requesting permission, compare outside-cwd access targets against active allowedOutsideCwdPaths and recognized destructive rm commands against active allowedDestructiveBashPaths below.",
+	"Configured allowedOutsideCwdPaths are permission exceptions for access outside process.cwd(); resolve relative file-tool paths against process.cwd() before checking, and do not ask solely because an access is outside process.cwd() when every outside-cwd target is covered.",
+	"Configured allowedDestructiveBashPaths are permission exceptions only for forced or recursive rm commands the extension recognizes as exempt, including all targets being static absolute or home-relative and covered; do not ask solely because such an extension-recognized rm is destructive.",
+	"Only for allowedDestructiveBashPaths exemptions, relative, dynamic, ambiguous, mixed covered/uncovered, or symlink-escaping targets; rm segments with redirections, pipes, or background execution; rm after unrecognized prior commands; and unrelated destructive commands are not exempt.",
+	"For scripted access to paths outside process.cwd() that are not covered, ask the user before intentionally reading, writing, creating, moving, or deleting files.",
+	"This extension checks built-in read/write/edit calls, blocks protected write/edit paths, and asks before common destructive bash commands; bash/script checks are intentionally heuristic and are not a sandbox.",
 ].join(" ");
 
 const configFileName = "pi-cwd-guard.json";
@@ -284,7 +288,7 @@ function loadConfig(cwd: string): CwdGuardConfig {
 	};
 }
 
-function getScriptGuidance(cwd: string): string {
+function getAgentGuidance(cwd: string): string {
 	const config = loadConfig(cwd);
 	const allowedOutsidePaths =
 		config.allowedOutsideCwdPaths.length > 0
@@ -296,7 +300,7 @@ function getScriptGuidance(cwd: string): string {
 			: "  (none)";
 
 	return [
-		scriptGuidanceIntro,
+		agentGuidanceIntro,
 		"Active recursive pi-cwd-guard allowedOutsideCwdPaths for this cwd:",
 		allowedOutsidePaths,
 		"Active recursive pi-cwd-guard allowedDestructiveBashPaths for recognized commands:",
@@ -571,7 +575,7 @@ async function confirmOrBlock(
 
 export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event, ctx) => ({
-		systemPrompt: `${event.systemPrompt}\n\n${getScriptGuidance(ctx.cwd)}`,
+		systemPrompt: `${event.systemPrompt}\n\n${getAgentGuidance(ctx.cwd)}`,
 	}));
 
 	pi.registerCommand("cwd-guard", {
