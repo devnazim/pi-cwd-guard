@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getDangerousBashMatches } from "./destructive-bash.ts";
 
 const fileTools = new Set(["read", "write", "edit"]);
@@ -38,7 +38,7 @@ const cwdGuardSubcommandCompletions = [
 ];
 
 const cwdGuardScopeFlagCompletions = [
-	{ flag: "--project", description: "Save exception in this project's .pi config" },
+	{ flag: "--project", description: `Save exception in this project's ${CONFIG_DIR_NAME} config` },
 	{ flag: "--global", description: "Save exception in the global pi config" },
 ];
 
@@ -235,7 +235,7 @@ function uniquePaths(paths: string[]): string[] {
 
 function getConfigPaths(cwd: string) {
 	const globalConfigPath = path.join(getAgentDir(), "extensions", configFileName);
-	const projectConfigPath = path.join(cwd, ".pi", configFileName);
+	const projectConfigPath = path.join(cwd, CONFIG_DIR_NAME, configFileName);
 	return { globalConfigPath, projectConfigPath };
 }
 
