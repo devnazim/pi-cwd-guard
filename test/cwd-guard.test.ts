@@ -78,6 +78,14 @@ test("treats configured paths as permission exceptions", async () => {
 		const guidanceResult = await beforeAgentStartHandler({ systemPrompt: "Base prompt" }, { cwd });
 		assert.match(
 			guidanceResult.systemPrompt,
+			/Before changing actual application configuration, runtime configuration, or deployment configuration.*ask the user for permission unless the user's current request explicitly authorizes that exact change/,
+		);
+		assert.match(
+			guidanceResult.systemPrompt,
+			/Do not ask merely because a file, directory, or symbol contains config, settings, or env/,
+		);
+		assert.match(
+			guidanceResult.systemPrompt,
 			/Before requesting permission, compare outside-cwd access targets against active allowedOutsideCwdPaths/,
 		);
 		assert.match(
@@ -100,6 +108,110 @@ test("treats configured paths as permission exceptions", async () => {
 			guidanceResult.systemPrompt,
 			new RegExp(`^  - ${allowedDestructivePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"),
 		);
+	} finally {
+		if (previousAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("leaves application configuration semantics to agent guidance instead of path heuristics", async () => {
+	const toolCallHandler = registerHandlers().get("tool_call");
+	assert.ok(toolCallHandler);
+
+	const ctx = {
+		cwd: path.join(os.tmpdir(), "project"),
+		hasUI: false,
+		ui: {
+			confirm: async () => {
+				throw new Error("In-cwd configuration paths should not request tool confirmation");
+			},
+		},
+	};
+	const writes = [
+		{
+			path: "src/features/settings/page.tsx",
+			content: "export function SettingsPage() { return null; }",
+		},
+		{
+			path: "src/config/user-preferences.ts",
+			content: "export const API_URL = process.env.PUBLIC_API_URL;",
+		},
+		{
+			path: "docker-compose.yml",
+			content: "services:\n  app:\n    image: example/app",
+		},
+	];
+
+	for (const input of writes) {
+		assert.equal(await toolCallHandler({ toolName: "write", input }, ctx), undefined);
+	}
+	assert.equal(
+		await toolCallHandler(
+			{
+				toolName: "edit",
+				input: {
+					path: "src/config/user-preferences.ts",
+					edits: [
+						{
+							oldText: "export const API_URL = process.env.PUBLIC_API_URL;",
+							newText: "export const API_URL = process.env.PUBLIC_API_ENDPOINT;",
+						},
+					],
+				},
+			},
+			ctx,
+		),
+		undefined,
+	);
+});
+
+test("retains unambiguous tool-level protections", async () => {
+	const root = mkdtempSync(path.join(os.tmpdir(), "pi-cwd-guard-test-"));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = path.join(root, "agent");
+
+	try {
+		const toolCallHandler = registerHandlers().get("tool_call");
+		assert.ok(toolCallHandler);
+
+		const cwd = path.join(root, "project");
+		const ctx = {
+			cwd,
+			hasUI: false,
+			ui: {
+				confirm: async () => {
+					throw new Error("No-UI guards should block without confirmation");
+				},
+			},
+		};
+
+		const protectedResult = await toolCallHandler(
+			{ toolName: "write", input: { path: ".env", content: "API_KEY=secret" } },
+			ctx,
+		);
+		assert.equal(protectedResult.block, true);
+		assert.match(protectedResult.reason, /environment file/);
+
+		const outsideResult = await toolCallHandler(
+			{
+				toolName: "write",
+				input: { path: path.join(root, "outside", "app-config.ts"), content: "export default {};" },
+			},
+			ctx,
+		);
+		assert.equal(outsideResult.block, true);
+		assert.match(outsideResult.reason, /write outside cwd/);
+
+		const destructiveResult = await toolCallHandler(
+			{ toolName: "bash", input: { command: "rm -rf cache" } },
+			ctx,
+		);
+		assert.equal(destructiveResult.block, true);
+		assert.match(destructiveResult.reason, /Potentially destructive bash command blocked/);
 	} finally {
 		if (previousAgentDir === undefined) {
 			delete process.env.PI_CODING_AGENT_DIR;

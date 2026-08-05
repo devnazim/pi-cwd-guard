@@ -8,6 +8,9 @@ const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
 
 const agentGuidanceIntro = [
+	"Before changing actual application configuration, runtime configuration, or deployment configuration—including configured values, defaults, endpoints, feature flags, ports, or provider settings—ask the user for permission unless the user's current request explicitly authorizes that exact change.",
+	"Do not ask merely because a file, directory, or symbol contains config, settings, or env; configuration UIs, models, schemas, validation, tests, documentation, and refactors are ordinary application code.",
+	"If uncertain whether an edit changes actual application configuration, explain the specific effect and ask.",
 	"Before requesting permission, compare outside-cwd access targets against active allowedOutsideCwdPaths and recognized destructive rm commands against active allowedDestructiveBashPaths below.",
 	"Configured allowedOutsideCwdPaths are permission exceptions for access outside process.cwd(); resolve relative file-tool paths against process.cwd() before checking, and do not ask solely because an access is outside process.cwd() when every outside-cwd target is covered.",
 	"Configured allowedDestructiveBashPaths are permission exceptions only for forced or recursive rm commands the extension recognizes as exempt, including all targets being static absolute or home-relative and covered; do not ask solely because such an extension-recognized rm is destructive.",
@@ -113,104 +116,6 @@ const hardProtectedFileNames = new Set([
 ]);
 
 const hardProtectedExtensions = new Set([".pem", ".key", ".p12", ".pfx", ".kubeconfig"]);
-
-const runtimeConfigFileNames = new Set([
-	"env.ts",
-	"env.tsx",
-	"env.js",
-	"env.jsx",
-	"env.mts",
-	"env.cts",
-	"env.mjs",
-	"env.cjs",
-	"runtime-config.ts",
-	"runtime-config.js",
-	"app-config.ts",
-	"app-config.js",
-	"application.json",
-	"application.properties",
-	"application.yaml",
-	"application.yml",
-	"appsettings.json",
-	"compose.yaml",
-	"compose.yml",
-	"docker-compose.yaml",
-	"docker-compose.yml",
-	"firebase.json",
-	"fly.toml",
-	"netlify.toml",
-	"render.yaml",
-	"render.yml",
-	"serverless.json",
-	"serverless.yaml",
-	"serverless.yml",
-	"terraform.tfvars",
-	"terraform.tfvars.json",
-	"values.yaml",
-	"values.yml",
-	"vercel.json",
-	"wrangler.toml",
-]);
-
-const runtimeConfigContentPatterns = [
-	{ label: "BASE_URL", pattern: /\bBASE_URL\b/ },
-	{ label: "API_URL", pattern: /\bAPI_URL\b/ },
-	{ label: "PUBLIC_*", pattern: /\bPUBLIC_[A-Z0-9_]+\b/ },
-	{ label: "*_KEY", pattern: /\b[A-Z0-9_]+_(?:API_)?KEY\b/ },
-	{ label: "*_TOKEN", pattern: /\b[A-Z0-9_]+_TOKEN\b/ },
-	{ label: "CLIENT_ID", pattern: /\bCLIENT_ID\b/ },
-	{ label: "CLIENT_SECRET", pattern: /\bCLIENT_SECRET\b/ },
-	{ label: "process.env", pattern: /\bprocess\.env\b/ },
-	{ label: "znv", pattern: /\bznv\b/i },
-];
-
-const runtimeConfigDirectoryNames = new Set([
-	".config",
-	"conf",
-	"conf.d",
-	"config",
-	"configs",
-	"configuration",
-	"deploy",
-	"deployment",
-	"deployments",
-	"env",
-	"environments",
-	"helm",
-	"infra",
-	"infrastructure",
-	"k8s",
-	"kubernetes",
-	"manifests",
-	"settings",
-]);
-
-const runtimeConfigFileExtensions = new Set([
-	".cjs",
-	".conf",
-	".config",
-	".cts",
-	".hcl",
-	".ini",
-	".js",
-	".json",
-	".jsonc",
-	".jsx",
-	".mjs",
-	".mts",
-	".properties",
-	".tfvars",
-	".toml",
-	".ts",
-	".tsx",
-	".xml",
-	".yaml",
-	".yml",
-]);
-
-const runtimeConfigFileNamePattern = /(?:^|[-_.])(?:appsettings|application|config|env|environment|settings)(?:[-_.]|$)/;
-
-const runtimeConfigContentFileNamePattern = /(?:^|[-_.])(?:config|env|environment|settings|constants)(?:[-_.]|$)/;
 
 function normalizeToolPath(inputPath: string): string {
 	// Built-in file tools strip a leading @ before resolving paths.
@@ -449,64 +354,6 @@ function getHardProtectedReason(cwd: string, resolvedPath: string): string | und
 	if (protectedDirectory) return `protected directory: ${protectedDirectory}`;
 
 	return undefined;
-}
-
-function isRuntimeConfigPath(cwd: string, resolvedPath: string): boolean {
-	const checkedPath = scopedPath(cwd, resolvedPath);
-	const parts = pathParts(checkedPath);
-	const fileName = path.basename(checkedPath).toLowerCase();
-
-	if (runtimeConfigFileNames.has(fileName)) return true;
-	if (parts.includes("config") && /(?:^|[-_.])env\.(?:[cm]?[jt]sx?)$/.test(fileName)) return true;
-	if (/(?:^|[-_.])runtime[-_.]?config\.(?:[cm]?[jt]sx?)$/.test(fileName)) return true;
-	if (!runtimeConfigFileExtensions.has(path.extname(fileName))) return false;
-	if (runtimeConfigFileNamePattern.test(fileName)) return true;
-	if (parts.some((part) => runtimeConfigDirectoryNames.has(part))) return true;
-
-	return false;
-}
-
-function isRuntimeConfigContentCandidate(cwd: string, resolvedPath: string): boolean {
-	const checkedPath = scopedPath(cwd, resolvedPath);
-	const parts = pathParts(checkedPath);
-	const fileName = path.basename(checkedPath).toLowerCase();
-
-	return parts.some((part) => runtimeConfigDirectoryNames.has(part)) || runtimeConfigContentFileNamePattern.test(fileName);
-}
-
-function getMutationText(toolName: string, input: unknown): string {
-	if (!input || typeof input !== "object") return "";
-
-	if (toolName === "write") {
-		const content = (input as { content?: unknown }).content;
-		return typeof content === "string" ? content : "";
-	}
-
-	if (toolName === "edit") {
-		const edits = (input as { edits?: unknown }).edits;
-		if (!Array.isArray(edits)) return "";
-
-		return edits
-			.map((edit) => {
-				if (!edit || typeof edit !== "object") return "";
-				const { oldText, newText } = edit as { oldText?: unknown; newText?: unknown };
-				return [oldText, newText].filter((text): text is string => typeof text === "string").join("\n");
-			})
-			.join("\n");
-	}
-
-	return "";
-}
-
-function getRuntimeConfigReason(cwd: string, toolName: string, resolvedPath: string, input: unknown): string | undefined {
-	if (isRuntimeConfigPath(cwd, resolvedPath)) return "runtime config path";
-	if (!isRuntimeConfigContentCandidate(cwd, resolvedPath)) return undefined;
-
-	const mutationText = getMutationText(toolName, input);
-	if (!mutationText) return undefined;
-
-	const matchedPattern = runtimeConfigContentPatterns.find(({ pattern }) => pattern.test(mutationText));
-	return matchedPattern ? `runtime config-like content (${matchedPattern.label})` : undefined;
 }
 
 function getPiCmuxNotifier(): PiCmuxNotifier | undefined {
@@ -751,22 +598,6 @@ export default function (pi: ExtensionAPI) {
 					block: true,
 					reason: `${event.toolName} blocked for protected path (${hardProtectedReason}): ${resolvedPath}`,
 				};
-			}
-
-			const runtimeConfigReason = getRuntimeConfigReason(cwd, event.toolName, resolvedPath, event.input);
-			if (runtimeConfigReason) {
-				const result = await confirmOrBlock(
-					ctx,
-					`Allow ${event.toolName} to runtime config?`,
-					[
-						`Reason: ${runtimeConfigReason}`,
-						`Path: ${inputPath}`,
-						...(normalizedPath === inputPath ? [] : [`Normalized: ${normalizedPath}`]),
-						`Resolved: ${resolvedPath}`,
-					].join("\n"),
-					`${event.toolName} to runtime config blocked`,
-				);
-				if (result) return result;
 			}
 		}
 

@@ -1,6 +1,6 @@
 # pi-cwd-guard
 
-A small [Pi](https://github.com/earendil-works/pi) safety extension package for cwd access, protected paths, runtime config confirmation, and common destructive bash commands.
+A small [Pi](https://github.com/earendil-works/pi) safety extension package for cwd access, protected paths, application configuration guidance, and common destructive bash commands.
 
 ## What it guards
 
@@ -51,7 +51,7 @@ Notes:
 - Relative paths in project config resolve against the current working directory.
 - Relative paths in global config resolve against `~/.pi/agent/extensions`.
 - Project and global path lists are merged independently.
-- `allowedOutsideCwdPaths` only skips outside-cwd confirmation. It does not bypass hard-protected path blocks, runtime config confirmation, or destructive bash confirmation.
+- `allowedOutsideCwdPaths` only skips outside-cwd confirmation. It does not bypass hard-protected path blocks or destructive bash confirmation.
 - `allowedDestructiveBashPaths` skips the destructive bash confirmation only for recognized `rm` commands when every static absolute or `~/...` target is recursively covered.
 - Relative, dynamic, or ambiguous targets, mixed allowed/disallowed targets, redirections on the `rm` segment, and unrelated destructive operations still require confirmation.
 - Existing path ancestors are resolved through symlinks before applying an exemption. This remains a heuristic preflight check, not a sandbox or protection against filesystem races.
@@ -93,21 +93,13 @@ Command notes:
 
 These are hard-blocked rather than confirmed.
 
-### Runtime config confirmation
+### Application configuration guidance
 
-`write` and `edit` ask for confirmation before changing likely runtime config, including paths like `env.ts`, `runtime-config.ts`, `app-config.ts`, `config.ts`, `config.json`, `appsettings.json`, `application.yml`, deployment config such as `docker-compose.yml`, `serverless.yml`, `vercel.json`, `netlify.toml`, `wrangler.toml`, and config files under config-ish/deployment directories such as `config/*.ts`, `config/*.json`, `k8s/*.yaml`, or `infra/*.tfvars`. For config-ish files/directories only, edits containing obvious environment/API markers also ask for confirmation, such as:
+The extension adds semantic guidance asking the agent to get permission before changing actual application configuration, runtime configuration, or deployment configuration—including configured values, defaults, endpoints, feature flags, ports, or provider settings—unless the user's current request already explicitly authorizes that exact change.
 
-- `BASE_URL`
-- `API_URL`
-- `PUBLIC_*`
-- `*_KEY`
-- `*_TOKEN`
-- `CLIENT_ID`
-- `CLIENT_SECRET`
-- `process.env`
-- `znv`
+Configuration is not classified from path or content patterns. A file, directory, or symbol containing `config`, `settings`, or `env` does not by itself require permission. Configuration UIs, models, schemas, validation, tests, documentation, and refactors are treated as ordinary application code. For example, editing `src/features/settings/page.tsx` or `src/config/user-preferences.ts` does not trigger a tool-level confirmation merely because of its path.
 
-If no UI is available, runtime config changes are blocked by default.
+This policy is advisory because the agent can use task context to distinguish an actual configuration change from code implementing a configuration feature. Hard-protected credential and secret paths remain blocked, and the cwd and destructive-command checks remain enforced by tool hooks.
 
 ### Permission prompt notifications
 
@@ -126,7 +118,7 @@ If [pi-cmux](https://www.npmjs.com/package/pi-cmux) is installed, `pi-cwd-guard`
 
 This is intentionally heuristic and small. It does not parse shell scripts, inspect script files, or sandbox Python/Node.js/other scripts. Recognized forced or recursive `rm` commands skip confirmation when every static absolute or home-relative target is under an `allowedDestructiveBashPaths` entry. A compound command may precede the exempted `rm` only with recognized `mkdir -p` operations under the same allow-list. Commands with relative, dynamic, ambiguous, mixed, or symlink-escaping targets remain confirm-by-default. Other destructive patterns such as `sudo` and Git operations are never path-exempted.
 
-The extension adds advisory prompt guidance telling the agent to inspect both active merged exception lists before requesting permission. It identifies `allowedOutsideCwdPaths` as recursive exceptions for outside-cwd access, including covered relative file-tool paths after resolution against the cwd, and `allowedDestructiveBashPaths` as recursive exceptions for supported forced or recursive `rm` commands. Restrictions on relative, dynamic, ambiguous, or mixed targets apply to destructive `rm` exemptions, not normal outside-cwd path matching. The agent therefore does not ask solely because a covered access is outside the cwd or a covered recognized `rm` is destructive; uncovered scripted access and unrelated destructive commands still require confirmation.
+The extension also adds advisory prompt guidance telling the agent to inspect both active merged exception lists before requesting permission. It identifies `allowedOutsideCwdPaths` as recursive exceptions for outside-cwd access, including covered relative file-tool paths after resolution against the cwd, and `allowedDestructiveBashPaths` as recursive exceptions for supported forced or recursive `rm` commands. Restrictions on relative, dynamic, ambiguous, or mixed targets apply to destructive `rm` exemptions, not normal outside-cwd path matching. The agent therefore does not ask solely because a covered access is outside the cwd or a covered recognized `rm` is destructive; uncovered scripted access and unrelated destructive commands still require confirmation.
 
 ## Install
 
