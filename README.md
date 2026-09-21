@@ -11,6 +11,8 @@ The extension intercepts these built-in tools:
 - `edit`
 - `bash`
 
+Pi's optional Windows `powershell` tool is not intercepted. Destructive-command checks apply only to `bash`.
+
 ### Current working directory guard
 
 Before `read`, `write`, or `edit` runs, the extension strips a leading `@` the same way Pi's built-in file tools do, then resolves the tool's `path` argument against the current working directory.
@@ -144,7 +146,7 @@ The package also includes a root `index.ts` shim, so direct extension-directory 
 
 ## Compatibility
 
-`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer.
+`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer. Tests and type checks pass against Pi 0.86.1 and the minimum supported 0.80.3 release with matching Pi core packages. Development uses Pi 0.86.1. Loader tests cover both the package manifest and root `index.ts` entry point.
 
 ## Development
 
