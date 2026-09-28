@@ -1,6 +1,6 @@
 {
   "name": "pi-cwd-guard",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Small Pi safety extension for cwd access, protected paths, application configuration guidance, and common destructive bash commands.",
   "keywords": [
     "pi-package",
@@ -39,7 +39,7 @@
     "@earendil-works/pi-coding-agent": ">=0.80.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.86.1",
+    "@earendil-works/pi-coding-agent": "^0.87.1",
     "typescript": "^7.0.2"
   }
 }

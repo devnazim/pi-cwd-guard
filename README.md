@@ -146,7 +146,9 @@ The package also includes a root `index.ts` shim, so direct extension-directory 
 
 ## Compatibility
 
-`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer. Tests and type checks pass against Pi 0.86.1 and the minimum supported 0.80.3 release with matching Pi core packages. Development uses Pi 0.86.1. Loader tests cover both the package manifest and root `index.ts` entry point.
+`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer. Tests and type checks pass against Pi 0.87.1 and the minimum supported 0.80.3 release with matching Pi core packages. Development uses Pi 0.87.1. Loader tests cover both the package manifest and root `index.ts` entry point.
+
+Use a current Pi release. Pi 0.80.3 remains API-compatible, but its pinned `undici` dependency has known security vulnerabilities. The Pi 0.87.1 development dependency tree passes `npm audit` with no known vulnerabilities.
 
 ## Development
 
