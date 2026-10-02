@@ -1,11 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { CONFIG_DIR_NAME, getAgentDir, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getDangerousBashMatches } from "./destructive-bash.ts";
 
 const fileTools = new Set(["read", "write", "edit"]);
 const mutatingFileTools = new Set(["write", "edit"]);
+// Pi added Windows shell drive conversion in 0.84.0.
+const [piMajorVersion, piMinorVersion] = VERSION.split(".").map(Number);
+const piConvertsWindowsShellPaths = piMajorVersion > 0 || piMinorVersion >= 84;
 
 const agentGuidanceIntro = [
 	"Before changing actual application configuration, runtime configuration, or deployment configuration—including configured values, defaults, endpoints, feature flags, ports, or provider settings—ask the user for permission unless the user's current request explicitly authorizes that exact change.",
@@ -118,9 +122,21 @@ const hardProtectedFileNames = new Set([
 const hardProtectedExtensions = new Set([".pem", ".key", ".p12", ".pfx", ".kubeconfig"]);
 
 function normalizeToolPath(inputPath: string): string {
-	// Built-in file tools strip a leading @ before resolving paths.
-	// Match that behavior so @/tmp/foo and @../foo are guarded correctly.
-	return inputPath.startsWith("@") ? inputPath.slice(1) : inputPath;
+	// Match Pi's built-in file tools without importing private Pi modules.
+	let normalized = inputPath.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+	if (normalized.startsWith("@")) normalized = normalized.slice(1);
+
+	if (piConvertsWindowsShellPaths && process.platform === "win32" && normalized.startsWith("/") && !normalized.startsWith("//") && !normalized.includes("\\")) {
+		const match = normalized.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+		if (match) normalized = `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
+	}
+
+	if (normalized === "~") return os.homedir();
+	if (normalized.startsWith("~/") || (process.platform === "win32" && normalized.startsWith("~\\"))) {
+		return path.join(os.homedir(), normalized.slice(2));
+	}
+	if (/^file:\/\//.test(normalized)) return fileURLToPath(normalized);
+	return normalized;
 }
 
 function isOutsideCwd(cwd: string, target: string): boolean {
@@ -392,35 +408,44 @@ function clearPermissionNotification(): void {
 	});
 }
 
-async function confirmWithNotification(
-	ctx: { ui: { confirm(title: string, message?: string): Promise<boolean> } },
-	title: string,
-	message: string,
-): Promise<boolean> {
-	notifyPermissionRequest(title);
-	try {
-		return await ctx.ui.confirm(title, message);
-	} finally {
-		clearPermissionNotification();
-	}
-}
-
-async function confirmOrBlock(
-	ctx: { hasUI: boolean; ui: { confirm(title: string, message?: string): Promise<boolean> } },
-	title: string,
-	message: string,
-	blockReason: string,
-) {
-	if (!ctx.hasUI) {
-		return { block: true, reason: `${blockReason} (no UI for confirmation)` };
-	}
-
-	const ok = await confirmWithNotification(ctx, title, message);
-	if (!ok) return { block: true, reason: blockReason };
-	return undefined;
-}
-
 export default function (pi: ExtensionAPI) {
+	// Pi has one active extension selector. Queue this instance's confirmations
+	// so concurrent tool calls cannot replace a dialog and lose its decision.
+	let confirmationTail = Promise.resolve();
+
+	function confirmWithNotification(
+		ctx: { ui: { confirm(title: string, message?: string): Promise<boolean> } },
+		title: string,
+		message: string,
+	): Promise<boolean> {
+		const result = confirmationTail.then(async () => {
+			notifyPermissionRequest(title);
+			try {
+				return await ctx.ui.confirm(title, message);
+			} finally {
+				clearPermissionNotification();
+			}
+		});
+		// A rejected dialog must not prevent the next request from opening.
+		confirmationTail = result.then(() => undefined, () => undefined);
+		return result;
+	}
+
+	async function confirmOrBlock(
+		ctx: { hasUI: boolean; ui: { confirm(title: string, message?: string): Promise<boolean> } },
+		title: string,
+		message: string,
+		blockReason: string,
+	) {
+		if (!ctx.hasUI) {
+			return { block: true, reason: `${blockReason} (no UI for confirmation)` };
+		}
+
+		const ok = await confirmWithNotification(ctx, title, message);
+		if (!ok) return { block: true, reason: blockReason };
+		return undefined;
+	}
+
 	pi.on("before_agent_start", (event, ctx) => ({
 		systemPrompt: `${event.systemPrompt}\n\n${getAgentGuidance(ctx.cwd)}`,
 	}));

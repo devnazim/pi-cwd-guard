@@ -15,7 +15,7 @@ Pi's optional Windows `powershell` tool is not intercepted. Destructive-command 
 
 ### Current working directory guard
 
-Before `read`, `write`, or `edit` runs, the extension strips a leading `@` the same way Pi's built-in file tools do, then resolves the tool's `path` argument against the current working directory.
+Before `read`, `write`, or `edit` runs, the extension normalizes the tool's `path` like Pi's built-in file tools, then resolves it against the current working directory. This includes Unicode spaces, a leading `@`, tilde expansion, and file URL decoding. On Windows, shell drive paths are converted only with Pi 0.84.0 or newer, matching the installed Pi version. The cwd and protected-path checks use this normalized path.
 
 - If the resolved path is inside the current working directory, the tool continues to the next checks.
 - If the resolved path is outside the current working directory and is not covered by `allowedOutsideCwdPaths`, Pi asks for confirmation.
@@ -105,6 +105,8 @@ This policy is advisory because the agent can use task context to distinguish an
 
 ### Permission prompt notifications
 
+The extension queues its confirmation dialogs so concurrent file-tool, destructive bash, and global-config requests show one confirmation at a time. Each decision goes to the request that opened the dialog. A rejected dialog does not stop later requests.
+
 If [pi-cmux](https://www.npmjs.com/package/pi-cmux) is installed, `pi-cwd-guard` sends a best-effort cmux notification/status update whenever it opens a permission confirmation. This is optional and no-ops when pi-cmux is not present.
 
 ### Common destructive bash confirmation
@@ -146,9 +148,9 @@ The package also includes a root `index.ts` shim, so direct extension-directory 
 
 ## Compatibility
 
-`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer. Tests and type checks pass against Pi 0.87.1 and the minimum supported 0.80.3 release with matching Pi core packages. Development uses Pi 0.87.1. Loader tests cover both the package manifest and root `index.ts` entry point.
+`pi-cwd-guard` uses Pi's extension API via a peer dependency and requires `@earendil-works/pi-coding-agent` 0.80.3 or newer. Tests and type checks pass against Pi 1.0.0 and the minimum supported 0.80.3 release with matching Pi core packages. Development uses Pi 1.0.0. Loader tests cover both the package manifest and root `index.ts` entry point.
 
-Use a current Pi release. Pi 0.80.3 remains API-compatible, but its pinned `undici` dependency has known security vulnerabilities. The Pi 0.87.1 development dependency tree passes `npm audit` with no known vulnerabilities.
+Use a current Pi release. Pi 0.80.3 remains API-compatible, but its pinned `undici` dependency has known security vulnerabilities. The Pi 1.0.0 development dependency tree passes `npm audit` with no known vulnerabilities.
 
 ## Development
 
